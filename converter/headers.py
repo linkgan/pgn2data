@@ -89,7 +89,7 @@ file_headers_moves = ["game_id",
                       "fen_row5_black_value",
                       "fen_row6_black_value",
                       "fen_row7_black_value",
-                      "fen_row8_black_value",
-                      "move_sequence"]
+                      "fen_row8_black_value"
+                      ]
 
-file_headers_stockfish = ["eval", "prev_eval", "diff_eval", "depth"]
+file_headers_stockfish = ["eval", "prev_eval", "diff_eval", "depth", "move_assessment"] ### Added move_assessment

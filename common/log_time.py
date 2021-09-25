@@ -1,5 +1,8 @@
+import sys
+sys.path.append("../../pgn2data")
+
 from timeit import default_timer as timer
-from common.common import seconds_to_text
+from pgn2data.common.common import seconds_to_text
 from datetime import datetime
 import logging
 

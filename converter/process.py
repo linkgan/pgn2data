@@ -4,17 +4,26 @@ import ntpath
 import queue
 import uuid
 from threading import Thread
+import io
 
 import chess
 import chess.pgn
 import chess.engine
+import pandas as pd
 
-from common.log_time import get_time_stamp
-from converter.fen import FenStats
-from converter.headers import file_headers_game, file_headers_moves, file_headers_stockfish
+import sys
+sys.path.append("../../pgn2data")
+
+from pgn2data.common.log_time import get_time_stamp
+from pgn2data.converter.fen import FenStats
+from pgn2data.converter.headers import file_headers_game, file_headers_moves, file_headers_stockfish
+from pgn2data.converter.move_assessment import move_assessment
+from pgn2data.converter.gamePlayerMove import GamePlayerMove
 
 log = logging.getLogger("pgn2data - process")
 logging.basicConfig(level=logging.INFO)
+
+import sqlite3 as sql
 
 
 class PlayerMove:
@@ -45,17 +54,37 @@ class PlayerMove:
         return self.__piece
 
 
+class Game:
+    """
+        This is a new class.
+        This is a game object that is a collection of GamePlayerMove
+    """
+    def __init__(self, game, game_id, move_list=None):
+        self.game = game ###Chess.game object
+        self.game_id = game_id
+        self.move_list = move_list
+
+    def get_game(self):
+        return self.game
+
 class Process:
     """
     Handles the pgn to data conversion
     """
 
-    def __init__(self, pgn_file, file_games, file_moves, engine_path, engine_depth):
+    def __init__(self, pgn_file, file_games, file_moves, engine_path, engine_depth, source, game_id=None):
         self.pgn_file = pgn_file
         self.file_games = file_games
         self.file_moves = file_moves
         self.engine_path = engine_path
         self.engine_depth = engine_depth
+        self.source = source
+        self.game_id = game_id
+        self.con = sql.connect("data/moves_f.db")
+
+        log.info("**** Using new Process file ****")
+
+    # def parse_pgn(self):
 
     def parse_file(self, add_headers_flag=True):
         """
@@ -63,8 +92,13 @@ class Process:
         into the game csv file, and the moves into the moves csv file
         """
 
-        log.info("Processing file:{}".format(self.pgn_file))
-        pgn = open(self.pgn_file)
+        if(self.source == 'chess.com'):
+            log.info("Processing pgn string from Chess.com api: {} ".format(self.game_id))
+            pgn = io.StringIO(self.pgn_file)
+
+        else:
+            log.info("Processing file:{} [NEED TO UPDATE THIS FILE PROCESSING METHOD]".format(self.pgn_file))
+            pgn = open(self.pgn_file)
 
         engine = None
         if self.engine_path is not None:
@@ -88,13 +122,24 @@ class Process:
 
         order = 1
         while True:
-            game_id = str(uuid.uuid4())
-            game = chess.pgn.read_game(pgn)
-            if game is None:
+            game_id = -1
+            if self.source == 'chess.com':
+                game_id = self.game_id
+            else:
+                game_id = str(uuid.uuid4())
+
+            game = Game(chess.pgn.read_game(pgn), game_id)
+
+            if game.get_game() is None:
                 break  # end of file
 
-            game_writer.writerow(self.__get_game_row_data(game, game_id, order, self.pgn_file))
-            q.put((game_id, game, move_writer, engine, self.engine_depth))
+            ### Create Game object to process
+
+            ### Update to SQLite DB
+            game_writer.writerow(self.__get_game_row_data(game.game, game.game_id, order, self.pgn_file))
+
+
+            q.put((game.game_id, game.game, move_writer, engine, self.engine_depth))
             order += 1
 
         q.join()
@@ -111,6 +156,17 @@ class Process:
             # game_id | game | move_writer | engine | engine_depth
             self.__process_move(item[0], item[1], item[2], item[3], item[4])
             q.task_done()
+
+    def __move_to_db(self, move):
+        """
+        Insert data from processed move into table
+        """
+        table_name = 'moves_f'
+        cur = self.con.cursor()
+        cur.execute(f'''
+            INSERT INTO {table_name}
+
+        ''')
 
     def __process_move(self, game_id, game, moves_writer, engine, depth):
         """
@@ -138,10 +194,12 @@ class Process:
             sequence += ("|" if len(sequence) > 0 else "") + str(notation)
 
             # output the data about the move to the file
-            row_data, prev_eval, is_white = self.__get_move_row_data(player_move, board, game_id, game, order_number,
+            row_data, prev_eval, is_white, moveObj = self.__get_move_row_data(player_move, board, game_id, game, order_number,
                                                                      players_order_number, sequence, engine, depth,
                                                                      white_eval, black_eval)
             moves_writer.writerow(row_data)
+            log.info("TO DO: write moveObj ({}) to a SQLite DB".format(type(moveObj.board_data.values())))
+
 
             # this is tracking the move numbers in the game
             players_order_number += 1 if (order_number % 2) == 0 else 0
@@ -158,6 +216,7 @@ class Process:
         """
 
         winner = self.__get_winner(game)
+
         loser = game.headers["White"] if winner == game.headers["Black"] else (
             game.headers["Black"] if winner == game.headers["White"] else winner)
         winner_elo = game.headers["WhiteElo"] if winner == game.headers["White"] else (
@@ -167,6 +226,7 @@ class Process:
         winner_loser_elo_diff = 0 if not (str(winner_elo).isnumeric() and str(loser_elo).isnumeric()) else int(
             winner_elo) - int(loser_elo)
 
+        log.info("TO DO: Need to implement game summary stats in the game row data")
         return [game_id, order,
                 game.headers["Event"] if "Event" in game.headers else "",
                 game.headers["Site"] if "Site" in game.headers else "",
@@ -202,6 +262,11 @@ class Process:
         """
         process each move in a game
         """
+
+        '''
+            Initialize a GamePlayerMove object to capture all relevant information about each parsed move
+        '''
+
 
         fen_stats = FenStats(board.board_fen())
         white_count, black_count = fen_stats.get_total_piece_count()
@@ -263,15 +328,33 @@ class Process:
                 fen_row_valuations[4][3], fen_row_valuations[5][3], fen_row_valuations[6][3], fen_row_valuations[7][3],
                 sequence]
 
+        move = GamePlayerMove(player_move, game_id, order_number)
+        move.set_board_data(dict(zip(file_headers_moves, data)))
+
         if engine is not None:
             if isinstance(evaluation, int) and isinstance(white_eval, int) and isinstance(black_eval, int):
-                data.append(evaluation / 100.0)
-                prev_value = white_eval if is_white_move else black_eval
-                data.append(prev_value / 100.0)
-                data.append((float(evaluation) - float(prev_value)) / 100.0)
-                data.append(depth)
+                eng_data = []
 
-        return data, evaluation, is_white_move
+                prev_value = white_eval if is_white_move else black_eval
+                diff_value = (float(evaluation) - float(prev_value))/100.0
+
+                eng_data.append(evaluation / 100.0)
+                eng_data.append(prev_value / 100.0)
+                eng_data.append(diff_value)
+                eng_data.append(depth)
+
+                # Added Move move_assessment, checks if the difference between engine best move and current move is of blunder or not
+                for key, value in move_assessment.items():
+                    if diff_value >= value['start'] and diff_value < value['end']:
+                        eng_data.append(key)
+                        break
+
+                move.set_engine_data(dict(zip(file_headers_stockfish, eng_data)))
+                data = data+eng_data
+
+        ### Initialize move object and store all the relevant data in this object
+
+        return data, evaluation, is_white_move, move
 
     @staticmethod
     def __get_evaluation_from_board(board, depth, engine, is_white_move):

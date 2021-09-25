@@ -2,7 +2,10 @@ from collections import Counter
 import chess
 import logging
 
-from common.common import piece_fen_letters, piece_fen_count, piece_fen_value, full_range, piece_fen_letter_to_chess_piece
+import sys
+sys.path.append("../../pgn2data")
+
+from pgn2data.common.common import piece_fen_letters, piece_fen_count, piece_fen_value, full_range, piece_fen_letter_to_chess_piece
 
 log = logging.getLogger("pgn2data - fen")
 logging.basicConfig(level=logging.INFO)
@@ -115,4 +118,3 @@ class FenStats:
                     b_piece_valuation += piece_fen_value[chess_piece] if color == chess.BLACK else 0
 
         return w_piece_count, w_piece_valuation, b_piece_count, b_piece_valuation
-

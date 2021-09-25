@@ -2,10 +2,14 @@ import logging
 import ntpath
 import os.path
 
-from common.common import open_file
-from common.log_time import TimeProcess
-from converter.process import Process
-from converter.result import ResultFile, Result
+import sys
+sys.path.append("../../pgn2data")
+
+
+from pgn2data.common.common import open_file
+from pgn2data.common.log_time import TimeProcess
+from pgn2data.converter.process import Process
+from pgn2data.converter.result import ResultFile, Result
 
 log = logging.getLogger("pgn2data - pgn_data class")
 logging.basicConfig(level=logging.INFO)
@@ -23,11 +27,15 @@ class PGNData:
         p.export()
     """
 
-    def __init__(self, pgn, file_name=None):
-        self._pgn = pgn
+    def __init__(self, pgn, file_name=None, source = None, id=None):
+        self._pgn = pgn # Can be path to a pgn file or a string object from Chess.com API
         self._file_name = file_name
         self._engine_path = None
         self._depth = 20
+        self._player = None
+        self._source = source
+        self._id = id
+        log.info("**** Using new PGNData file ****")
 
     def set_engine_path(self, path):
         self._engine_path = path
@@ -38,13 +46,23 @@ class PGNData:
         else:
             log.error("Invalid engine depth specified: " + str(depth))
 
+    # Extended
+    def set_player_name(self, player):
+        self._player = player
+
     def export(self):
         """
         main method to convert pgn to csv
         """
         timer = TimeProcess()
         result = Result.get_empty_result()
-        if isinstance(self._pgn, list):
+
+        ### New
+        if(self._source == 'chess.com'):
+            file = self.__create_file_name(self._id)
+            result = self.__process_pgn_list(self._pgn, file)
+        ### End of New
+        elif isinstance(self._pgn, list):
             if not self.__is_valid_pgn_list(self._pgn):
                 log.error("no pgn files found!")
                 return result
@@ -86,10 +104,22 @@ class PGNData:
             return result
 
         add_headers = True
-        for file in file_list:
-            process = Process(file, file_games, file_moves, self._engine_path, self._depth)
+
+        '''
+         Implemented changes to allow for ingestion of chess.com API live
+         instead of relying on files
+        '''
+
+        if(self._source == 'chess.com' and isinstance(self._pgn, str)):
+            process = Process(file_list, file_games, file_moves, self._engine_path, self._depth, self._source, self._id)
             process.parse_file(add_headers)
             add_headers = False
+
+        else:
+            for file in file_list:
+                process = Process(file, file_games, file_moves, self._engine_path, self._depth, self._source)
+                process.parse_file(add_headers)
+                add_headers = False
 
         file_games.close()
         file_moves.close()
